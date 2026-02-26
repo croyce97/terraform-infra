@@ -19,6 +19,7 @@ variable "aws_region" {
 variable "ec2_ami_id" {
   description = "AMI ID dùng cho EC2 instance"
   type        = string
+  default     = "ami-0ac0e4288aa341886"
 }
 
 variable "ec2_instance_type" {
