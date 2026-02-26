@@ -1,0 +1,41 @@
+# Dev environment — triggered on PRs to `dev` and merges into `dev`
+#
+# Flow:
+#   feature/* → PR → dev   : plan + PR comment
+#   merge → dev            : plan + apply (auto-approve)
+#
+# Required GitHub secrets (Settings → Secrets → Actions):
+#   AWS_ROLE_ARN_DEV  — IAM role ARN for dev (trusted by GitHub OIDC)
+
+name: Terraform · Dev
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - "environments/dev/**"
+      - "modules/**"
+      - ".github/workflows/_terraform.yml"
+      - ".github/workflows/terraform-dev.yml"
+
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - "environments/dev/**"
+      - "modules/**"
+      - ".github/workflows/_terraform.yml"
+      - ".github/workflows/terraform-dev.yml"
+
+jobs:
+  terraform:
+    name: Dev
+    uses: ./.github/workflows/_terraform.yml
+    with:
+      environment: dev
+      working_directory: environments/dev
+      aws_region: ap-southeast-1
+      terraform_version: "1.9.0"
+    secrets:
+      aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}

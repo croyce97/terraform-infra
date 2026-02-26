@@ -1,0 +1,45 @@
+# Prod environment — triggered on PRs to `main` and merges into `main`
+#
+# Flow:
+#   dev → PR → main   : plan + PR comment
+#   merge → main      : plan + apply (gated by GitHub Environment "prod" required reviewers)
+#
+# Required GitHub secrets (Settings → Secrets → Actions):
+#   AWS_ROLE_ARN_PROD — IAM role ARN for prod (trusted by GitHub OIDC)
+#
+# Recommended: configure the "prod" GitHub Environment with:
+#   - Required reviewers (at least 1 senior engineer)
+#   - Deployment branches: main only
+
+name: Terraform · Prod
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "environments/prod/**"
+      - "modules/**"
+      - ".github/workflows/_terraform.yml"
+      - ".github/workflows/terraform-prod.yml"
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "environments/prod/**"
+      - "modules/**"
+      - ".github/workflows/_terraform.yml"
+      - ".github/workflows/terraform-prod.yml"
+
+jobs:
+  terraform:
+    name: Prod
+    uses: ./.github/workflows/_terraform.yml
+    with:
+      environment: prod
+      working_directory: environments/prod
+      aws_region: ap-southeast-1
+      terraform_version: "1.9.0"
+    secrets:
+      aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
