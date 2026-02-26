@@ -32,6 +32,11 @@ on:
       - ".github/workflows/_terraform.yml"
       - ".github/workflows/terraform-prod.yml"
 
+permissions:
+  id-token: write       # OIDC token exchange (passed down to reusable workflow)
+  contents: read        # checkout
+  pull-requests: write  # post plan comments on PRs
+
 jobs:
   terraform:
     name: Prod
