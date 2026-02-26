@@ -4,7 +4,7 @@ set -e
 # ===== CONFIG =====
 REGION="ap-southeast-1"
 PROJECT="my-terraform"
-ENV="dev"                     # dev | stg | prod
+ENV="prod"                     # dev | stg | prod
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
