@@ -23,3 +23,10 @@ module "s3" {
   project     = var.project
 }
 
+module "iam" {
+  source = "../../modules/iam"
+
+  name        = var.iam_username
+  environment = var.environment
+  project     = var.project
+}
