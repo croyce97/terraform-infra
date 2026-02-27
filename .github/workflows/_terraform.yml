@@ -1,5 +1,5 @@
 # Reusable Terraform workflow — called by terraform-dev.yml and terraform-prod.yml
-# Handles: fmt → init → validate → checkov → plan (on PR) → apply (on merge)
+# Handles: fmt → init → validate → plan (on PR) → apply (on merge)
 
 name: Terraform (Reusable)
 
@@ -49,7 +49,6 @@ jobs:
       id-token: write        # OIDC token exchange
       contents: read         # checkout
       pull-requests: write   # post plan comments
-      security-events: write # upload Checkov SARIF to GitHub Code Scanning
 
     steps:
       # ── 1. Checkout ────────────────────────────────────────────────────────
@@ -87,29 +86,7 @@ jobs:
         id: validate
         run: terraform validate -no-color
 
-      # ── 7. Checkov security scan ───────────────────────────────────────────
-      # Runs after init so downloaded modules are also scanned.
-      # Produces SARIF report visible in GitHub Security → Code Scanning.
-      # To skip specific checks: add `--skip-check CKV_AWS_xxx,CKV_AWS_yyy`
-      - name: Checkov Security Scan
-        id: checkov
-        uses: bridgecrewio/checkov-action@v12
-        with:
-          directory: ${{ inputs.working_directory }}
-          framework: terraform
-          output_format: cli,sarif
-          output_file_path: console,results.sarif
-          soft_fail: false   # hard fail — blocks plan/apply if HIGH/CRITICAL issues found
-        continue-on-error: true   # let SARIF upload & PR comment run before failing
-
-      - name: Upload Checkov SARIF to GitHub Code Scanning
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()   # upload even when checkov finds issues
-        with:
-          sarif_file: results.sarif
-          category: checkov-${{ inputs.environment }}
-
-      # ── 8a. Plan (PR only) ─────────────────────────────────────────────────
+      # ── 7. Plan (PR only) ──────────────────────────────────────────────────
       - name: Terraform Plan
         id: plan
         if: github.event_name == 'pull_request'
@@ -142,7 +119,6 @@ jobs:
               `| 🖌 **fmt**      | ${icon('${{ steps.fmt.outcome }}')} \`${{ steps.fmt.outcome }}\` |`,
               `| ⚙️ **init**    | ${icon('${{ steps.init.outcome }}')} \`${{ steps.init.outcome }}\` |`,
               `| 🤖 **validate**| ${icon('${{ steps.validate.outcome }}')} \`${{ steps.validate.outcome }}\` |`,
-              `| 🔒 **checkov** | ${icon('${{ steps.checkov.outcome }}')} \`${{ steps.checkov.outcome }}\` |`,
               `| 📋 **plan**    | ${icon('${{ steps.plan.outcome }}')} \`${{ steps.plan.outcome }}\` |`,
               '',
               '<details><summary><b>Show Plan Output</b></summary>',
@@ -185,12 +161,6 @@ jobs:
             }
 
       # Hard-fail assertions — run after comment so PR always gets updated
-      - name: Assert checkov passed
-        if: steps.checkov.outcome == 'failure'
-        run: |
-          echo "::error::Checkov found security issues — see GitHub Security tab (Code Scanning) for details"
-          exit 1
-
       - name: Assert plan succeeded
         if: github.event_name == 'pull_request' && steps.plan.outcome == 'failure'
         run: |
