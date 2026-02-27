@@ -29,9 +29,10 @@ on:
       - ".github/workflows/terraform-dev.yml"
 
 permissions:
-  id-token: write       # OIDC token exchange (passed down to reusable workflow)
-  contents: read        # checkout
-  pull-requests: write  # post plan comments on PRs
+  id-token: write        # OIDC token exchange (passed down to reusable workflow)
+  contents: read         # checkout
+  pull-requests: write   # post plan comments on PRs
+  security-events: write # upload Checkov SARIF to GitHub Code Scanning
 
 jobs:
   terraform:

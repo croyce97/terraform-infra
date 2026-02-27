@@ -1,5 +1,5 @@
 # Reusable Terraform workflow — called by terraform-dev.yml and terraform-prod.yml
-# Handles: fmt → init → validate → plan (on PR) → apply (on merge)
+# Handles: fmt → init → validate → checkov → plan (on PR) → apply (on merge)
 
 name: Terraform (Reusable)
 
@@ -46,9 +46,10 @@ jobs:
         working-directory: ${{ inputs.working_directory }}
 
     permissions:
-      id-token: write       # OIDC token exchange
-      contents: read        # checkout
-      pull-requests: write  # post plan comments
+      id-token: write        # OIDC token exchange
+      contents: read         # checkout
+      pull-requests: write   # post plan comments
+      security-events: write # upload Checkov SARIF to GitHub Code Scanning
 
     steps:
       # ── 1. Checkout ────────────────────────────────────────────────────────
@@ -74,7 +75,7 @@ jobs:
       - name: Terraform Format
         id: fmt
         run: terraform fmt -check -recursive
-        continue-on-error: true   # report outcome but don't block; fail in summary below
+        continue-on-error: true   # report outcome; hard-fail below after comment
 
       # ── 5. Init ────────────────────────────────────────────────────────────
       - name: Terraform Init
@@ -86,14 +87,36 @@ jobs:
         id: validate
         run: terraform validate -no-color
 
-      # ── 7a. Plan (PR only) ─────────────────────────────────────────────────
+      # ── 7. Checkov security scan ───────────────────────────────────────────
+      # Runs after init so downloaded modules are also scanned.
+      # Produces SARIF report visible in GitHub Security → Code Scanning.
+      # To skip specific checks: add `--skip-check CKV_AWS_xxx,CKV_AWS_yyy`
+      - name: Checkov Security Scan
+        id: checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ inputs.working_directory }}
+          framework: terraform
+          output_format: cli,sarif
+          output_file_path: console,results.sarif
+          soft_fail: false   # hard fail — blocks plan/apply if HIGH/CRITICAL issues found
+        continue-on-error: true   # let SARIF upload & PR comment run before failing
+
+      - name: Upload Checkov SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()   # upload even when checkov finds issues
+        with:
+          sarif_file: results.sarif
+          category: checkov-${{ inputs.environment }}
+
+      # ── 8a. Plan (PR only) ─────────────────────────────────────────────────
       - name: Terraform Plan
         id: plan
         if: github.event_name == 'pull_request'
         run: terraform plan -no-color -input=false -out=tfplan
         continue-on-error: true
 
-      # ── 7b. Post plan as PR comment ────────────────────────────────────────
+      # ── 8b. Post plan as PR comment ────────────────────────────────────────
       - name: Comment plan on PR
         uses: actions/github-script@v7
         if: github.event_name == 'pull_request'
@@ -119,6 +142,7 @@ jobs:
               `| 🖌 **fmt**      | ${icon('${{ steps.fmt.outcome }}')} \`${{ steps.fmt.outcome }}\` |`,
               `| ⚙️ **init**    | ${icon('${{ steps.init.outcome }}')} \`${{ steps.init.outcome }}\` |`,
               `| 🤖 **validate**| ${icon('${{ steps.validate.outcome }}')} \`${{ steps.validate.outcome }}\` |`,
+              `| 🔒 **checkov** | ${icon('${{ steps.checkov.outcome }}')} \`${{ steps.checkov.outcome }}\` |`,
               `| 📋 **plan**    | ${icon('${{ steps.plan.outcome }}')} \`${{ steps.plan.outcome }}\` |`,
               '',
               '<details><summary><b>Show Plan Output</b></summary>',
@@ -160,21 +184,26 @@ jobs:
               });
             }
 
-      # Fail the job if plan failed (after comment is posted)
+      # Hard-fail assertions — run after comment so PR always gets updated
+      - name: Assert checkov passed
+        if: steps.checkov.outcome == 'failure'
+        run: |
+          echo "::error::Checkov found security issues — see GitHub Security tab (Code Scanning) for details"
+          exit 1
+
       - name: Assert plan succeeded
         if: github.event_name == 'pull_request' && steps.plan.outcome == 'failure'
         run: |
           echo "::error::terraform plan failed — see comment on PR for details"
           exit 1
 
-      # Fail the job if fmt failed
       - name: Assert fmt passed
         if: steps.fmt.outcome == 'failure'
         run: |
           echo "::error::terraform fmt check failed — run 'terraform fmt -recursive' locally"
           exit 1
 
-      # ── 8. Apply (merge to branch only) ────────────────────────────────────
+      # ── 9. Apply (merge to branch only) ────────────────────────────────────
       - name: Terraform Apply
         if: github.event_name == 'push'
         run: terraform apply -auto-approve -input=false
