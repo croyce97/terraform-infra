@@ -46,9 +46,9 @@ jobs:
         working-directory: ${{ inputs.working_directory }}
 
     permissions:
-      id-token: write       # OIDC token exchange
-      contents: read        # checkout
-      pull-requests: write  # post plan comments
+      id-token: write        # OIDC token exchange
+      contents: read         # checkout
+      pull-requests: write   # post plan comments
 
     steps:
       # ── 1. Checkout ────────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ jobs:
       - name: Terraform Format
         id: fmt
         run: terraform fmt -check -recursive
-        continue-on-error: true   # report outcome but don't block; fail in summary below
+        continue-on-error: true   # report outcome; hard-fail below after comment
 
       # ── 5. Init ────────────────────────────────────────────────────────────
       - name: Terraform Init
@@ -86,14 +86,14 @@ jobs:
         id: validate
         run: terraform validate -no-color
 
-      # ── 7a. Plan (PR only) ─────────────────────────────────────────────────
+      # ── 7. Plan (PR only) ──────────────────────────────────────────────────
       - name: Terraform Plan
         id: plan
         if: github.event_name == 'pull_request'
         run: terraform plan -no-color -input=false -out=tfplan
         continue-on-error: true
 
-      # ── 7b. Post plan as PR comment ────────────────────────────────────────
+      # ── 8b. Post plan as PR comment ────────────────────────────────────────
       - name: Comment plan on PR
         uses: actions/github-script@v7
         if: github.event_name == 'pull_request'
@@ -160,21 +160,20 @@ jobs:
               });
             }
 
-      # Fail the job if plan failed (after comment is posted)
+      # Hard-fail assertions — run after comment so PR always gets updated
       - name: Assert plan succeeded
         if: github.event_name == 'pull_request' && steps.plan.outcome == 'failure'
         run: |
           echo "::error::terraform plan failed — see comment on PR for details"
           exit 1
 
-      # Fail the job if fmt failed
       - name: Assert fmt passed
         if: steps.fmt.outcome == 'failure'
         run: |
           echo "::error::terraform fmt check failed — run 'terraform fmt -recursive' locally"
           exit 1
 
-      # ── 8. Apply (merge to branch only) ────────────────────────────────────
+      # ── 9. Apply (merge to branch only) ────────────────────────────────────
       - name: Terraform Apply
         if: github.event_name == 'push'
         run: terraform apply -auto-approve -input=false
