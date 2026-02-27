@@ -28,3 +28,8 @@ variable "ec2_instance_type" {
   default     = "t3.micro"
 }
 
+variable "iam_username" {
+  description = "Tên IAM user cho môi trường dev"
+  type        = string
+  default     = "dev-user"
+}
