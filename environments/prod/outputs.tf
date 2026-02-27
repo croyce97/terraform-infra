@@ -13,3 +13,12 @@ output "demo_bucket_name" {
   value       = module.s3.bucket_name
 }
 
+output "iam_user_name" {
+  description = "Tên IAM user"
+  value       = module.iam.name
+}
+
+output "iam_user_arn" {
+  description = "ARN của IAM user"
+  value       = module.iam.arn
+}
