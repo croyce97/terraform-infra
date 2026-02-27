@@ -2,10 +2,13 @@
 #
 # Flow:
 #   feature/* → PR → dev   : plan + PR comment
-#   merge → dev            : plan + apply (auto-approve)
+#   merge → dev            : plan → wait for manual approval → apply
 #
 # Required GitHub secrets (Settings → Secrets → Actions):
-#   AWS_ROLE_ARN_DEV  — IAM role ARN for dev (trusted by GitHub OIDC)
+#   AWS_ROLE_ARN  — IAM role ARN for dev (trusted by GitHub OIDC)
+#
+# Manual approval gate:
+#   Settings → Environments → dev → Required reviewers (add at least 1 reviewer)
 
 name: Terraform · Dev
 

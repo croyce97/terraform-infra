@@ -1,5 +1,9 @@
 # Reusable Terraform workflow — called by terraform-dev.yml and terraform-prod.yml
-# Handles: fmt → init → validate → plan (on PR) → apply (on merge)
+# Handles: fmt → init → validate → plan (on PR or push) → apply (on push, manual approval)
+#
+# Manual approval gate:
+#   Configure the GitHub Environment (dev / prod) with required reviewers in:
+#   Repository Settings → Environments → <env> → Required reviewers
 
 name: Terraform (Reusable)
 
@@ -34,12 +38,11 @@ concurrency:
   cancel-in-progress: false   # never cancel an in-flight apply
 
 jobs:
-  terraform:
-    name: "${{ inputs.environment }} · ${{ github.event_name == 'pull_request' && 'Plan' || 'Apply' }}"
+  # ── Job 1: Plan ─────────────────────────────────────────────────────────────
+  # Runs on both PR and push. No approval gate — just plan and report.
+  plan:
+    name: "${{ inputs.environment }} · Plan"
     runs-on: ubuntu-latest
-
-    # Maps to a GitHub Environment (configure protection rules / required reviewers there)
-    environment: ${{ inputs.environment }}
 
     defaults:
       run:
@@ -51,11 +54,11 @@ jobs:
       pull-requests: write   # post plan comments
 
     steps:
-      # ── 1. Checkout ────────────────────────────────────────────────────────
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── 2. AWS credentials via OIDC (no long-lived keys) ──────────────────
+      # ── 2. AWS credentials via OIDC (no long-lived keys) ────────────────────
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -63,37 +66,45 @@ jobs:
           aws-region: ${{ inputs.aws_region }}
           role-session-name: github-actions-terraform-${{ inputs.environment }}
 
-      # ── 3. Terraform CLI ───────────────────────────────────────────────────
+      # ── 3. Terraform CLI ─────────────────────────────────────────────────────
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ inputs.terraform_version }}
-          terraform_wrapper: true   # wraps CLI so outputs are captured
+          terraform_wrapper: true   # wraps CLI so outputs are captured for PR comments
 
-      # ── 4. Format check ────────────────────────────────────────────────────
+      # ── 4. Format check ──────────────────────────────────────────────────────
       - name: Terraform Format
         id: fmt
         run: terraform fmt -check -recursive
         continue-on-error: true   # report outcome; hard-fail below after comment
 
-      # ── 5. Init ────────────────────────────────────────────────────────────
+      # ── 5. Init ──────────────────────────────────────────────────────────────
       - name: Terraform Init
         id: init
         run: terraform init -input=false
 
-      # ── 6. Validate ────────────────────────────────────────────────────────
+      # ── 6. Validate ──────────────────────────────────────────────────────────
       - name: Terraform Validate
         id: validate
         run: terraform validate -no-color
 
-      # ── 7. Plan (PR only) ──────────────────────────────────────────────────
+      # ── 7. Plan ──────────────────────────────────────────────────────────────
       - name: Terraform Plan
         id: plan
-        if: github.event_name == 'pull_request'
         run: terraform plan -no-color -input=false -out=tfplan
         continue-on-error: true
 
-      # ── 8b. Post plan as PR comment ────────────────────────────────────────
+      # ── 8. Upload plan artifact (push only — consumed by apply job) ──────────
+      - name: Upload plan artifact
+        if: github.event_name == 'push' && steps.plan.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}-${{ github.run_id }}
+          path: ${{ inputs.working_directory }}/tfplan
+          retention-days: 1
+
+      # ── 9. Post plan as PR comment ────────────────────────────────────────────
       - name: Comment plan on PR
         uses: actions/github-script@v7
         if: github.event_name == 'pull_request'
@@ -162,7 +173,7 @@ jobs:
 
       # Hard-fail assertions — run after comment so PR always gets updated
       - name: Assert plan succeeded
-        if: github.event_name == 'pull_request' && steps.plan.outcome == 'failure'
+        if: steps.plan.outcome == 'failure'
         run: |
           echo "::error::terraform plan failed — see comment on PR for details"
           exit 1
@@ -173,7 +184,58 @@ jobs:
           echo "::error::terraform fmt check failed — run 'terraform fmt -recursive' locally"
           exit 1
 
-      # ── 9. Apply (merge to branch only) ────────────────────────────────────
+  # ── Job 2: Apply ─────────────────────────────────────────────────────────────
+  # Runs only on push (merge). Gated by the GitHub Environment — configure
+  # required reviewers in: Settings → Environments → <env> → Required reviewers
+  apply:
+    name: "${{ inputs.environment }} · Apply"
+    runs-on: ubuntu-latest
+    needs: plan
+    if: github.event_name == 'push'
+
+    # This environment gate pauses execution until a required reviewer approves.
+    # Without required reviewers configured, the job proceeds immediately.
+    environment: ${{ inputs.environment }}
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    permissions:
+      id-token: write   # OIDC token exchange
+      contents: read    # checkout
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. AWS credentials via OIDC ──────────────────────────────────────────
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.aws_role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+          role-session-name: github-actions-terraform-${{ inputs.environment }}
+
+      # ── 3. Terraform CLI ─────────────────────────────────────────────────────
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+          terraform_wrapper: false
+
+      # ── 4. Init ──────────────────────────────────────────────────────────────
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      # ── 5. Download plan artifact ────────────────────────────────────────────
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}-${{ github.run_id }}
+          path: ${{ inputs.working_directory }}
+
+      # ── 6. Apply ─────────────────────────────────────────────────────────────
       - name: Terraform Apply
-        if: github.event_name == 'push'
-        run: terraform apply -auto-approve -input=false
+        run: terraform apply -input=false tfplan
