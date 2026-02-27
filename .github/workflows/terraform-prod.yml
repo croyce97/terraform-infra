@@ -2,14 +2,14 @@
 #
 # Flow:
 #   dev → PR → main   : plan + PR comment
-#   merge → main      : plan + apply (gated by GitHub Environment "prod" required reviewers)
+#   merge → main      : plan → wait for manual approval → apply
 #
 # Required GitHub secrets (Settings → Secrets → Actions):
-#   AWS_ROLE_ARN_PROD — IAM role ARN for prod (trusted by GitHub OIDC)
+#   AWS_ROLE_ARN  — IAM role ARN for prod (trusted by GitHub OIDC)
 #
-# Recommended: configure the "prod" GitHub Environment with:
-#   - Required reviewers (at least 1 senior engineer)
-#   - Deployment branches: main only
+# Manual approval gate:
+#   Settings → Environments → prod → Required reviewers (add at least 1 senior engineer)
+#   Settings → Environments → prod → Deployment branches → main only (recommended)
 
 name: Terraform · Prod
 
